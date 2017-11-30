@@ -67,6 +67,28 @@ type Transport interface {
 	Dial(address string, timeout time.Duration) (net.Conn, error)
 }
 
+// raftTransport takes a Transport and makes it suitable for use by the Raft
+// networking system.
+type raftTransport struct {
+	tn Transport
+}
+
+func (r *raftTransport) Dial(address raft.ServerAddress, timeout time.Duration) (net.Conn, error) {
+	return r.tn.Dial(string(address), timeout)
+}
+
+func (r *raftTransport) Accept() (net.Conn, error) {
+	return r.Accept()
+}
+
+func (r *raftTransport) Addr() net.Addr {
+	return r.Addr()
+}
+
+func (r *raftTransport) Close() error {
+	return r.Close()
+}
+
 // commandType are commands that affect the state of the cluster, and must go through Raft.
 type commandType int
 
@@ -173,12 +195,12 @@ type Store struct {
 
 	mu sync.RWMutex // Sync access between queries and snapshots.
 
-	raft          *raft.Raft // The consensus mechanism.
-	raftTransport Transport
-	dbConf        *DBConfig // SQLite database config.
-	dbPath        string    // Path to underlying SQLite file, if not in-memory.
-	db            *sql.DB   // The underlying SQLite store.
-	joinRequired  bool      // Whether an explicit join is required.
+	raft         *raft.Raft // The consensus mechanism.
+	raftTn       *raftTransport
+	dbConf       *DBConfig // SQLite database config.
+	dbPath       string    // Path to underlying SQLite file, if not in-memory.
+	db           *sql.DB   // The underlying SQLite store.
+	joinRequired bool      // Whether an explicit join is required.
 
 	metaMu sync.RWMutex
 	meta   *clusterMeta
@@ -207,14 +229,14 @@ func New(c *StoreConfig) *Store {
 	}
 
 	return &Store{
-		raftDir:       c.Dir,
-		raftTransport: c.Tn,
-		dbConf:        c.DBConf,
-		dbPath:        filepath.Join(c.Dir, sqliteFile),
-		meta:          newClusterMeta(),
-		logger:        logger,
-		ApplyTimeout:  applyTimeout,
-		OpenTimeout:   openTimeout,
+		raftDir:      c.Dir,
+		raftTn:       &raftTransport{c.Tn},
+		dbConf:       c.DBConf,
+		dbPath:       filepath.Join(c.Dir, sqliteFile),
+		meta:         newClusterMeta(),
+		logger:       logger,
+		ApplyTimeout: applyTimeout,
+		OpenTimeout:  openTimeout,
 	}
 }
 
@@ -233,7 +255,7 @@ func (s *Store) Open(enableSingle bool, nodeID string) error {
 	s.db = db
 
 	// Setup Raft communication.
-	transport := raft.NewNetworkTransport(s.raftTransport, 3, 10*time.Second, os.Stderr)
+	transport := raft.NewNetworkTransport(s.raftTn, 3, 10*time.Second, os.Stderr)
 
 	// Get the Raft configuration for this store.
 	config := s.raftConfig()
@@ -332,7 +354,7 @@ func (s *Store) Path() string {
 
 // Addr returns the address of the store.
 func (s *Store) Addr() net.Addr {
-	return s.raftTransport.Addr()
+	return s.raftTn.Addr()
 }
 
 // Leader returns the current leader. Returns a blank string if there is
@@ -361,7 +383,7 @@ func (s *Store) APIPeers() (map[string]string, error) {
 
 // Nodes returns the list of current peers.
 func (s *Store) Nodes() ([]string, error) {
-	return s.peerStore.Peers()
+	return nil, nil
 }
 
 // WaitForLeader blocks until a leader is detected, or the timeout expires.
@@ -427,12 +449,6 @@ func (s *Store) Stats() (map[string]interface{}, error) {
 		dbStatus["path"] = ":memory:"
 	}
 
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
-	peers, err := s.peerStore.Peers()
-	if err != nil {
-		return nil, err
-	}
 	status := map[string]interface{}{
 		"raft":               s.raft.Stats(),
 		"addr":               s.Addr().String(),
@@ -442,7 +458,6 @@ func (s *Store) Stats() (map[string]interface{}, error) {
 		"heartbeat_timeout":  s.HeartbeatTimeout.String(),
 		"snapshot_threshold": s.SnapshotThreshold,
 		"meta":               s.meta,
-		"peers":              peers,
 		"dir":                s.raftDir,
 		"sqlite3":            dbStatus,
 		"db_conf":            s.dbConf,
