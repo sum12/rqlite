@@ -229,6 +229,7 @@ func main() {
 		log.Println("node is already member of cluster, skip determining join addresses")
 	}
 
+	// Now, open it.
 	if err := str.Open(len(joins) == 0); err != nil {
 		log.Fatalf("failed to open store: %s", err.Error())
 	}
