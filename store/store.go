@@ -175,7 +175,6 @@ type Store struct {
 
 	raft          *raft.Raft // The consensus mechanism.
 	raftTransport Transport
-	peerStore     raft.PeerStore
 	dbConf        *DBConfig // SQLite database config.
 	dbPath        string    // Path to underlying SQLite file, if not in-memory.
 	db            *sql.DB   // The underlying SQLite store.
@@ -194,11 +193,10 @@ type Store struct {
 
 // StoreConfig represents the configuration of the underlying Store.
 type StoreConfig struct {
-	DBConf    *DBConfig      // The DBConfig object for this Store.
-	Dir       string         // The working directory for raft.
-	Tn        Transport      // The underlying Transport for raft.
-	Logger    *log.Logger    // The logger to use to log stuff.
-	PeerStore raft.PeerStore // The PeerStore to use for raft.
+	DBConf *DBConfig   // The DBConfig object for this Store.
+	Dir    string      // The working directory for raft.
+	Tn     Transport   // The underlying Transport for raft.
+	Logger *log.Logger // The logger to use to log stuff.
 }
 
 // New returns a new Store.
@@ -215,7 +213,6 @@ func New(c *StoreConfig) *Store {
 		dbPath:        filepath.Join(c.Dir, sqliteFile),
 		meta:          newClusterMeta(),
 		logger:        logger,
-		peerStore:     c.PeerStore,
 		ApplyTimeout:  applyTimeout,
 		OpenTimeout:   openTimeout,
 	}
@@ -238,29 +235,9 @@ func (s *Store) Open(enableSingle bool, nodeID string) error {
 	// Setup Raft communication.
 	transport := raft.NewNetworkTransport(s.raftTransport, 3, 10*time.Second, os.Stderr)
 
-	// Create peer storage if necesssary.
-	if s.peerStore == nil {
-		s.peerStore = raft.NewJSONPeers(s.raftDir, transport)
-	}
-
 	// Get the Raft configuration for this store.
 	config := s.raftConfig()
 	config.LocalID = raft.ServerID(nodeID)
-
-	// Check for any existing peers.
-	peers, err := s.peerStore.Peers()
-	if err != nil {
-		return err
-	}
-	s.joinRequired = len(peers) <= 1
-
-	// Allow the node to entry single-mode, potentially electing itself, if
-	// explicitly enabled and there is only 1 node in the cluster already.
-	if enableSingle && len(peers) <= 1 {
-		s.logger.Println("enabling single-node mode")
-		config.EnableSingleNode = true
-		config.DisableBootstrapAfterElect = false
-	}
 
 	// Create the snapshot store. This allows Raft to truncate the log.
 	snapshots, err := raft.NewFileSnapshotStore(s.raftDir, retainSnapshotCount, os.Stderr)
@@ -275,10 +252,23 @@ func (s *Store) Open(enableSingle bool, nodeID string) error {
 	}
 
 	// Instantiate the Raft system.
-	ra, err := raft.NewRaft(config, s, logStore, logStore, snapshots, s.peerStore, transport)
+	ra, err := raft.NewRaft(config, s, logStore, logStore, snapshots, transport)
 	if err != nil {
 		return fmt.Errorf("new raft: %s", err)
 	}
+
+	if enableSingle {
+		configuration := raft.Configuration{
+			Servers: []raft.Server{
+				raft.Server{
+					ID:      config.LocalID,
+					Address: transport.LocalAddr(),
+				},
+			},
+		}
+		ra.BootstrapCluster(configuration)
+	}
+
 	s.raft = ra
 
 	if s.OpenTimeout != 0 {
@@ -348,7 +338,7 @@ func (s *Store) Addr() net.Addr {
 // Leader returns the current leader. Returns a blank string if there is
 // no leader.
 func (s *Store) Leader() string {
-	return s.raft.Leader()
+	return string(s.raft.Leader())
 }
 
 // Peer returns the API address for the given addr. If there is no peer
@@ -584,7 +574,7 @@ func (s *Store) Join(id, addr string) error {
 		return ErrNotLeader
 	}
 
-	f := s.raft.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(addr), 0, 0)
+	f := s.raft.AddVoter(raft.ServerID(id), raft.ServerAddress(addr), 0, 0)
 	if e := f.(raft.Future); e.Error() != nil {
 		if e.Error() == raft.ErrNotLeader {
 			return ErrNotLeader
@@ -599,7 +589,7 @@ func (s *Store) Join(id, addr string) error {
 func (s *Store) Remove(addr string) error {
 	s.logger.Printf("received request to remove node %s", addr)
 
-	f := s.raft.RemovePeer(addr)
+	f := s.raft.RemovePeer(raft.ServerAddress(addr))
 	if f.Error() != nil {
 		return f.Error()
 	}
