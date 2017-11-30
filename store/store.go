@@ -78,15 +78,15 @@ func (r *raftTransport) Dial(address raft.ServerAddress, timeout time.Duration) 
 }
 
 func (r *raftTransport) Accept() (net.Conn, error) {
-	return r.Accept()
+	return r.tn.Accept()
 }
 
 func (r *raftTransport) Addr() net.Addr {
-	return r.Addr()
+	return r.tn.Addr()
 }
 
 func (r *raftTransport) Close() error {
-	return r.Close()
+	return r.tn.Close()
 }
 
 // commandType are commands that affect the state of the cluster, and must go through Raft.
@@ -197,6 +197,7 @@ type Store struct {
 
 	raft         *raft.Raft // The consensus mechanism.
 	raftTn       *raftTransport
+	raftID       string    // Node ID.
 	dbConf       *DBConfig // SQLite database config.
 	dbPath       string    // Path to underlying SQLite file, if not in-memory.
 	db           *sql.DB   // The underlying SQLite store.
@@ -218,6 +219,7 @@ type StoreConfig struct {
 	DBConf *DBConfig   // The DBConfig object for this Store.
 	Dir    string      // The working directory for raft.
 	Tn     Transport   // The underlying Transport for raft.
+	ID     string      // Node ID.
 	Logger *log.Logger // The logger to use to log stuff.
 }
 
@@ -231,6 +233,7 @@ func New(c *StoreConfig) *Store {
 	return &Store{
 		raftDir:      c.Dir,
 		raftTn:       &raftTransport{c.Tn},
+		raftID:       c.ID,
 		dbConf:       c.DBConf,
 		dbPath:       filepath.Join(c.Dir, sqliteFile),
 		meta:         newClusterMeta(),
@@ -259,7 +262,7 @@ func (s *Store) Open(enableSingle bool, nodeID string) error {
 
 	// Get the Raft configuration for this store.
 	config := s.raftConfig()
-	config.LocalID = raft.ServerID(nodeID)
+	config.LocalID = raft.ServerID(s.raftID)
 
 	// Create the snapshot store. This allows Raft to truncate the log.
 	snapshots, err := raft.NewFileSnapshotStore(s.raftDir, retainSnapshotCount, os.Stderr)
@@ -355,6 +358,11 @@ func (s *Store) Path() string {
 // Addr returns the address of the store.
 func (s *Store) Addr() net.Addr {
 	return s.raftTn.Addr()
+}
+
+// ID returns the Raft ID of the store.
+func (s *Store) ID() string {
+	return s.raftID
 }
 
 // Leader returns the current leader. Returns a blank string if there is

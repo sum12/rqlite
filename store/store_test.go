@@ -388,7 +388,7 @@ func Test_MultiNodeJoinRemove(t *testing.T) {
 	sort.StringSlice(storeNodes).Sort()
 
 	// Join the second node to the first.
-	if err := s0.Join(s1.Addr().String()); err != nil {
+	if err := s0.Join(s1.ID(), s1.Addr().String()); err != nil {
 		t.Fatalf("failed to join to node at %s: %s", s0.Addr().String(), err.Error())
 	}
 
@@ -439,7 +439,7 @@ func Test_MultiNodeExecuteQuery(t *testing.T) {
 	defer s1.Close(true)
 
 	// Join the second node to the first.
-	if err := s0.Join(s1.Addr().String()); err != nil {
+	if err := s0.Join(s1.ID(), s1.Addr().String()); err != nil {
 		t.Fatalf("failed to join to node at %s: %s", s0.Addr().String(), err.Error())
 	}
 
@@ -681,11 +681,13 @@ func mustNewStore(inmem bool) *Store {
 	path := mustTempDir()
 	defer os.RemoveAll(path)
 
+	tn := mustMockTransport("localhost:0")
 	cfg := NewDBConfig("", inmem)
 	s := New(&StoreConfig{
 		DBConf: cfg,
 		Dir:    path,
-		Tn:     mustMockTransport("localhost:0"),
+		Tn:     tn,
+		ID:     tn.Addr().String(), // Could be any unique string.
 	})
 	if s == nil {
 		panic("failed to create new store")
