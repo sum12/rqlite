@@ -86,7 +86,7 @@ const desc = `rqlite is a lightweight, distributed relational database, which us
 storage engine. It provides an easy-to-use, fault-tolerant store for relational data.`
 
 func init() {
-	flag.StringVar(&nodeID, "node-id", "", "Unique name for node. If not set, uses hostname")
+	flag.StringVar(&nodeID, "node-id", "", "Unique name for node. If not set, set to hostname")
 	flag.StringVar(&httpAddr, "http-addr", "localhost:4001", "HTTP server bind address. For HTTPS, set X.509 cert and key")
 	flag.StringVar(&httpAdv, "http-adv-addr", "", "Advertised HTTP address. If not set, same as HTTP server")
 	flag.StringVar(&x509Cert, "http-cert", "", "Path to X.509 certificate for HTTP endpoint")
@@ -187,10 +187,15 @@ func main() {
 	}
 	dbConf := store.NewDBConfig(dsn, !onDisk)
 
+	nid, err := idOrHostname()
+	if err != nil {
+		log.Fatalf("failed to determine node ID: %s", err.Error())
+	}
 	str := store.New(&store.StoreConfig{
 		DBConf: dbConf,
 		Dir:    dataPath,
 		Tn:     raftTn,
+		ID:     nid,
 	})
 
 	// Set optional parameters on store.
@@ -224,12 +229,7 @@ func main() {
 		log.Println("node is already member of cluster, skip determining join addresses")
 	}
 
-	// Open the store.
-	nodeID, err = node()
-	if err != nil {
-		log.Fatalf("failed to determine node ID: %s", err.Error())
-	}
-	if err := str.Open(len(joins) == 0, nodeID); err != nil {
+	if err := str.Open(len(joins) == 0); err != nil {
 		log.Fatalf("failed to open store: %s", err.Error())
 	}
 
@@ -247,7 +247,7 @@ func main() {
 		if raftAdv != "" {
 			advAddr = raftAdv
 		}
-		if j, err := cluster.Join(joins, advAddr, noVerify); err != nil {
+		if j, err := cluster.Join(joins, nid, advAddr, noVerify); err != nil {
 			log.Fatalf("failed to join cluster at %s: %s", joins, err.Error())
 		} else {
 			log.Println("successfully joined cluster at", j)
@@ -383,7 +383,7 @@ func credentialStore() (*auth.CredentialsStore, error) {
 	return cs, nil
 }
 
-func nodeID() (string, error) {
+func idOrHostname() (string, error) {
 	if nodeID != "" {
 		return nodeID, nil
 	}
