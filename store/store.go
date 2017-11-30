@@ -189,6 +189,12 @@ func NewDBConfig(dsn string, memory bool) *DBConfig {
 	return &DBConfig{DSN: dsn, Memory: memory}
 }
 
+// Server represents another node in the cluster.
+type Server struct {
+	ID   string
+	Addr string
+}
+
 // Store is a SQLite database, where all changes are made via Raft consensus.
 type Store struct {
 	raftDir string
@@ -390,8 +396,22 @@ func (s *Store) APIPeers() (map[string]string, error) {
 }
 
 // Nodes returns the list of current peers.
-func (s *Store) Nodes() ([]string, error) {
-	return nil, nil
+func (s *Store) Nodes() ([]*Server, error) {
+	f := s.raft.GetConfiguration()
+	if f.Error() != nil {
+		return nil, f.Error()
+	}
+
+	rs := f.Configuration().Servers
+	servers := make([]*Server, len(rs))
+	for i := range rs {
+		servers[i] = &Server{
+			ID:   string(rs[i].ID),
+			Addr: string(rs[i].Address),
+		}
+	}
+
+	return servers, nil
 }
 
 // WaitForLeader blocks until a leader is detected, or the timeout expires.
