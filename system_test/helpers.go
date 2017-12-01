@@ -84,7 +84,7 @@ func (n *Node) QueryMulti(stmts []string) (string, error) {
 
 // Join instructs this node to join the leader.
 func (n *Node) Join(leader *Node) error {
-	resp, err := DoJoinRequest(leader.Store.ID(), leader.APIAddr, n.RaftAddr)
+	resp, err := DoJoinRequest(leader.APIAddr, n.Store.ID(), n.RaftAddr)
 	if err != nil {
 		return err
 	}
@@ -281,9 +281,9 @@ func Remove(n *Node, addr string) error {
 	return nil
 }
 
-// DoJoinRequest sends a join request to nodeAddr, for raftAddr.
-func DoJoinRequest(id, nodeAddr, raftAddr string) (*http.Response, error) {
-	b, err := json.Marshal(map[string]string{"id": id, "addr": raftAddr})
+// DoJoinRequest sends a join request to nodeAddr, for raftID, reachable at raftAddr.
+func DoJoinRequest(nodeAddr, raftID, raftAddr string) (*http.Response, error) {
+	b, err := json.Marshal(map[string]string{"id": raftID, "addr": raftAddr})
 	if err != nil {
 		return nil, err
 	}
