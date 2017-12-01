@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -58,72 +59,6 @@ type ExecuteRequest struct {
 	Timings bool
 	Tx      bool
 }
-
-// Transport is the interface the network service must provide.
-type Transport interface {
-	net.Listener
-
-	// Dial is used to create a new outgoing connection
-	Dial(address string, timeout time.Duration) (net.Conn, error)
-}
-
-// raftTransport takes a Transport and makes it suitable for use by the Raft
-// networking system.
-type raftTransport struct {
-	tn Transport
-}
-
-func (r *raftTransport) Dial(address raft.ServerAddress, timeout time.Duration) (net.Conn, error) {
-	return r.tn.Dial(string(address), timeout)
-}
-
-func (r *raftTransport) Accept() (net.Conn, error) {
-	return r.tn.Accept()
-}
-
-func (r *raftTransport) Addr() net.Addr {
-	return r.tn.Addr()
-}
-
-func (r *raftTransport) Close() error {
-	return r.tn.Close()
-}
-
-// commandType are commands that affect the state of the cluster, and must go through Raft.
-type commandType int
-
-const (
-	execute commandType = iota // Commands which modify the database.
-	query                      // Commands which query the database.
-	peer                       // Commands that modify peers map.
-)
-
-type command struct {
-	Typ commandType     `json:"typ,omitempty"`
-	Sub json.RawMessage `json:"sub,omitempty"`
-}
-
-func newCommand(t commandType, d interface{}) (*command, error) {
-	b, err := json.Marshal(d)
-	if err != nil {
-		return nil, err
-	}
-	return &command{
-		Typ: t,
-		Sub: b,
-	}, nil
-
-}
-
-// databaseSub is a command sub which involves interaction with the database.
-type databaseSub struct {
-	Tx      bool     `json:"tx,omitempty"`
-	Queries []string `json:"queries,omitempty"`
-	Timings bool     `json:"timings,omitempty"`
-}
-
-// peersSub is a command which sets the API address for a Raft address.
-type peersSub map[string]string
 
 // ConsistencyLevel represents the available read consistency levels.
 type ConsistencyLevel int
@@ -194,6 +129,12 @@ type Server struct {
 	ID   string
 	Addr string
 }
+
+type Servers []*Server
+
+func (s Servers) Less(i, j int) bool { return s[i].ID < s[j].ID }
+func (s Servers) Len() int           { return len(s) }
+func (s Servers) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 // Store is a SQLite database, where all changes are made via Raft consensus.
 type Store struct {
@@ -395,7 +336,7 @@ func (s *Store) APIPeers() (map[string]string, error) {
 	return peers, nil
 }
 
-// Nodes returns the list of current peers.
+// Nodes returns the slice of nodes in the cluster, sorted by ID ascending.
 func (s *Store) Nodes() ([]*Server, error) {
 	f := s.raft.GetConfiguration()
 	if f.Error() != nil {
@@ -411,6 +352,7 @@ func (s *Store) Nodes() ([]*Server, error) {
 		}
 	}
 
+	sort.Sort(Servers(servers))
 	return servers, nil
 }
 
@@ -628,15 +570,15 @@ func (s *Store) Join(id, addr string) error {
 	return nil
 }
 
-// Remove removes a node from the store, specified by addr.
-func (s *Store) Remove(addr string) error {
-	s.logger.Printf("received request to remove node %s", addr)
+// Remove removes a node from the store, specified by ID.
+func (s *Store) Remove(id string) error {
+	s.logger.Printf("received request to remove node %s", id)
 
-	f := s.raft.RemovePeer(raft.ServerAddress(addr))
+	f := s.raft.RemoveServer(raft.ServerID(id), 0, 0)
 	if f.Error() != nil {
 		return f.Error()
 	}
-	s.logger.Printf("node %s removed successfully", addr)
+	s.logger.Printf("node %s removed successfully", id)
 	return nil
 }
 
