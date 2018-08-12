@@ -29,8 +29,6 @@ func _sqlite_datetime_extract(lookup_type string, dt time.Time) int {
 		} else {
 			return 1
 		}
-	/*case "loc":
-	  return dt.Location()*/
 	case "minute":
 		return dt.Minute()
 	case "month":
@@ -39,10 +37,6 @@ func _sqlite_datetime_extract(lookup_type string, dt time.Time) int {
 		return dt.Nanosecond()
 	case "second":
 		return dt.Second()
-	/*case "unix":
-	return dt.Unix()*/
-	/*case "unixnano":
-	return dt.UnixNano()*/
 	case "year":
 		return dt.Year()
 	case "yearday":
@@ -129,8 +123,6 @@ func ConnectHook(conn *sqlite.SQLiteConn) error {
 	funcmap["django_time_diff"] = _sqlite_time_diff
 	funcmap["regexp"] = _sqlite_regexp
 	funcmap["django_power"] = _sqlite_pow
-	//funcmap["django_timestamp_diff"] = _sqlite_timestamp_diff
-	//funcmap["django_format_dtdelta", 3, _sqlite_format_dtdelta)
 
 	for k, v := range funcmap {
 		if err := conn.RegisterFunc(k, v, true); err != nil {
